@@ -4,9 +4,14 @@
 
 // ===== CONFIG =====
 const CONFIG = {
+  // Twelve Data — free, 800 req/day, CORS-friendly
+  twelveDataBase: 'https://api.twelvedata.com/time_series',
+  twelveDataKey: 'demo',   // 'demo' works for SPY/AAPL/etc at low volume; replace with free key from twelvedata.com for higher limits
+  // Yahoo Finance via CORS proxies (fallback)
   corsProxies: [
-    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url => `https://thingproxy.freeboard.io/fetch/${url}`,
   ],
   yahooBase: 'https://query1.finance.yahoo.com/v8/finance/chart',
   benchmarks: [
@@ -47,33 +52,65 @@ function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
-// ===== API — YAHOO FINANCE =====
-async function fetchTicker(ticker) {
-  if (state.cache[ticker]) return state.cache[ticker];
+// ===== API — DATA FETCHING (Twelve Data primary, Yahoo fallback) =====
 
+async function fetchViaTwelveData(ticker) {
+  const url = `${CONFIG.twelveDataBase}?symbol=${ticker}&interval=1month&outputsize=5000&apikey=${CONFIG.twelveDataKey}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error('Twelve Data HTTP error');
+  const data = await res.json();
+  if (data.status === 'error' || !data.values?.length) throw new Error(data.message || 'No data');
+
+  // Twelve Data returns newest-first, reverse to oldest-first
+  const values = [...data.values].reverse();
+  return values
+    .map(v => ({ date: new Date(v.datetime), price: parseFloat(v.close) }))
+    .filter(d => !isNaN(d.price));
+}
+
+async function fetchViaYahoo(ticker) {
   const url = `${CONFIG.yahooBase}/${ticker}?range=max&interval=1mo&includePrePost=false&events=div%2Csplit`;
-
-  let data = null;
   for (const makeUrl of CONFIG.corsProxies) {
     try {
       const res = await fetch(makeUrl(url), { signal: AbortSignal.timeout(12000) });
       if (!res.ok) continue;
-      data = await res.json();
-      if (data?.chart?.result) break;
+      const data = await res.json();
+      if (!data?.chart?.result?.[0]) continue;
+
+      const result = data.chart.result[0];
+      const timestamps = result.timestamp || [];
+      const adjClose = result.indicators?.adjclose?.[0]?.adjclose || [];
+      const parsed = timestamps
+        .map((ts, i) => ({ date: new Date(ts * 1000), price: adjClose[i] }))
+        .filter(d => d.price !== null && d.price !== undefined && !isNaN(d.price));
+      if (parsed.length > 0) return parsed;
     } catch {
       continue;
     }
   }
+  throw new Error(`לא ניתן לטעון נתונים עבור ${ticker}`);
+}
 
-  if (!data?.chart?.result?.[0]) throw new Error(`לא ניתן לטעון נתונים עבור ${ticker}`);
+async function fetchTicker(ticker) {
+  if (state.cache[ticker]) return state.cache[ticker];
 
-  const result = data.chart.result[0];
-  const timestamps = result.timestamp || [];
-  const adjClose = result.indicators?.adjclose?.[0]?.adjclose || [];
+  let parsed = null;
 
-  const parsed = timestamps
-    .map((ts, i) => ({ date: new Date(ts * 1000), price: adjClose[i] }))
-    .filter(d => d.price !== null && d.price !== undefined && !isNaN(d.price));
+  // Try Twelve Data first
+  try {
+    parsed = await fetchViaTwelveData(ticker);
+  } catch (e) {
+    console.warn(`Twelve Data failed for ${ticker}:`, e.message, '— trying Yahoo...');
+  }
+
+  // Fallback to Yahoo via CORS proxies
+  if (!parsed || parsed.length === 0) {
+    parsed = await fetchViaYahoo(ticker);
+  }
+
+  if (!parsed || parsed.length === 0) {
+    throw new Error(`לא ניתן לטעון נתונים עבור ${ticker}`);
+  }
 
   state.cache[ticker] = parsed;
   return parsed;
