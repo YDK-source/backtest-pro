@@ -10,7 +10,35 @@
 </head>
 <body class="dark">
 
-  <!-- Navbar -->
+  <!-- ========== LOBBY (shown before entering a room) ========== -->
+  <div id="lobby-overlay" class="lobby-overlay">
+    <div class="lobby-card">
+      <div class="lobby-brand">📈 Backtest Pro</div>
+      <p class="lobby-tagline">השוואת תיקי השקעות בזמן אמת</p>
+
+      <div id="lobby-no-firebase" class="lobby-warning hidden">
+        <span>⚠️ Firebase לא מוגדר עדיין</span>
+        <p class="lobby-warning-sub">עיין בקובץ <code>firebase-config.js</code> להוראות הגדרה.<br>
+          ניתן להמשיך במצב מקומי (ללא סנכרון בין משתמשים).</p>
+      </div>
+
+      <div id="lobby-firebase-form" class="lobby-form">
+        <button class="btn btn-primary btn-lg" id="createRoomBtn">✨ צור חדר חדש</button>
+        <div class="lobby-divider">— או —</div>
+        <div class="lobby-join-row">
+          <input type="text" id="roomCodeInput" placeholder="קוד חדר (6 תווים)"
+                 maxlength="6" autocomplete="off" spellcheck="false">
+          <button class="btn btn-secondary" id="joinRoomBtn">הצטרף ←</button>
+        </div>
+      </div>
+
+      <button class="btn btn-ghost btn-sm lobby-local-btn" id="lobbyLocalBtn">
+        המשך ללא חדר (מקומי)
+      </button>
+    </div>
+  </div>
+
+  <!-- ========== NAVBAR ========== -->
   <nav class="navbar">
     <div class="navbar-brand">
       <span class="brand-icon">📈</span>
@@ -21,6 +49,12 @@
       <button class="tab-btn" data-page="portfolios">תיקים</button>
       <button class="tab-btn" data-page="backtest">Backtest</button>
       <button class="tab-btn" data-page="calculator">מחשבון</button>
+    </div>
+    <div id="room-badge" class="room-badge hidden">
+      <span class="room-badge-dot"></span>
+      חדר:&nbsp;<strong id="room-code-display"></strong>
+      <button class="room-copy-btn" id="copyRoomCodeBtn" title="העתק קוד">📋</button>
+      <button class="room-leave-btn" id="leaveRoomBtn" title="עזוב חדר">✕</button>
     </div>
     <button class="theme-btn" id="themeToggle" title="החלף ערכת נושא">🌙</button>
   </nav>
@@ -39,16 +73,16 @@
       </div>
       <div id="dashboard-empty" class="empty-state hidden">
         <div class="empty-icon">📊</div>
-        <h3>אין עדיין תיקים</h3>
-        <p>צור תיק חדש כדי להתחיל</p>
-        <button class="btn btn-primary" onclick="navigate('portfolios')">צור תיק ראשון</button>
+        <h3>אין עדיין תיקים בחדר</h3>
+        <p>הוסף תיק ראשון — החבר שלך יראה אותו מיידית</p>
+        <button class="btn btn-primary" onclick="navigate('portfolios')">הוסף תיק</button>
       </div>
       <div id="dashboard-content" class="hidden">
         <div id="portfolio-cards" class="cards-grid"></div>
         <div class="card mt-4">
           <div class="card-header">
             <h3>השוואת ביצועים — 12 חודשים אחרונים</h3>
-            <span class="badge" id="dashboard-loading-badge">טוען...</span>
+            <span class="badge hidden" id="dashboard-loading-badge">טוען...</span>
           </div>
           <canvas id="dashboard-chart" height="320"></canvas>
         </div>
@@ -60,15 +94,35 @@
       <div class="page-header">
         <div>
           <h1>תיקי השקעות</h1>
-          <p class="page-subtitle">הוסף וערוך תיקים</p>
+          <p class="page-subtitle">הוסף וערוך תיקים — מסונכרן בזמן אמת</p>
         </div>
-        <button class="btn btn-primary" id="addPortfolioBtn">+ הוסף תיק</button>
+        <div class="header-actions">
+          <button class="btn btn-ghost btn-sm" id="importFileBtn">📂 ייבוא</button>
+          <button class="btn btn-ghost btn-sm" id="exportAllBtn">💾 ייצוא</button>
+          <button class="btn btn-primary" id="addPortfolioBtn">+ הוסף תיק</button>
+        </div>
       </div>
+
+      <div id="import-banner" class="import-banner hidden">
+        <div class="import-banner-content">
+          <span class="import-icon">🔗</span>
+          <div>
+            <strong id="import-banner-name"></strong>
+            <span class="text-muted"> — תיק משותף התקבל</span>
+          </div>
+        </div>
+        <div class="import-banner-actions">
+          <button class="btn btn-primary btn-sm" id="confirmImportBtn">✅ ייבא</button>
+          <button class="btn btn-ghost btn-sm" id="dismissImportBtn">התעלם</button>
+        </div>
+      </div>
+
+      <input type="file" id="import-file-input" accept=".json" style="display:none">
       <div id="portfolios-list"></div>
       <div id="portfolios-empty" class="empty-state hidden">
         <div class="empty-icon">💼</div>
-        <h3>אין תיקים עדיין</h3>
-        <p>לחץ על "הוסף תיק" כדי להתחיל</p>
+        <h3>אין תיקים בחדר עדיין</h3>
+        <p>לחץ על "הוסף תיק" — החבר שלך יראה אותו מיידית</p>
       </div>
     </div>
 
@@ -121,7 +175,7 @@
 
       <div id="bt-results" class="hidden">
         <div class="card">
-          <div class="card-header"><h3>ביצועים לאורך זמן (מנורמל ל-100 בנקודת ההתחלה)</h3></div>
+          <div class="card-header"><h3>ביצועים לאורך זמן (מנורמל ל-100)</h3></div>
           <canvas id="backtest-chart" height="400"></canvas>
         </div>
         <div class="card mt-4">
@@ -147,8 +201,8 @@
 
       <div id="bt-no-portfolios" class="empty-state hidden">
         <div class="empty-icon">⚠️</div>
-        <h3>אין תיקים</h3>
-        <p>הוסף לפחות תיק אחד כדי להריץ Backtest</p>
+        <h3>אין תיקים בחדר</h3>
+        <p>הוסף לפחות תיק אחד</p>
         <button class="btn btn-primary" onclick="navigate('portfolios')">הוסף תיק</button>
       </div>
     </div>
@@ -192,26 +246,12 @@
         </div>
         <div id="sim-results" class="hidden">
           <div class="result-cards">
-            <div class="result-card">
-              <div class="result-label">שווי נוכחי</div>
-              <div class="result-value" id="sim-current">—</div>
-            </div>
-            <div class="result-card" id="sim-pnl-card">
-              <div class="result-label">רווח / הפסד</div>
-              <div class="result-value" id="sim-pnl">—</div>
-            </div>
-            <div class="result-card">
-              <div class="result-label">תשואה כוללת</div>
-              <div class="result-value" id="sim-total-ret">—</div>
-            </div>
-            <div class="result-card">
-              <div class="result-label">CAGR שנתי</div>
-              <div class="result-value" id="sim-cagr">—</div>
-            </div>
+            <div class="result-card"><div class="result-label">שווי נוכחי</div><div class="result-value" id="sim-current">—</div></div>
+            <div class="result-card" id="sim-pnl-card"><div class="result-label">רווח / הפסד</div><div class="result-value" id="sim-pnl">—</div></div>
+            <div class="result-card"><div class="result-label">תשואה כוללת</div><div class="result-value" id="sim-total-ret">—</div></div>
+            <div class="result-card"><div class="result-label">CAGR שנתי</div><div class="result-value" id="sim-cagr">—</div></div>
           </div>
-          <div class="card mt-3">
-            <canvas id="sim-chart" height="280"></canvas>
-          </div>
+          <div class="card mt-3"><canvas id="sim-chart" height="280"></canvas></div>
         </div>
       </div>
 
@@ -239,26 +279,12 @@
         </div>
         <div id="dca-results" class="hidden">
           <div class="result-cards">
-            <div class="result-card">
-              <div class="result-label">שווי נוכחי</div>
-              <div class="result-value" id="dca-current">—</div>
-            </div>
-            <div class="result-card">
-              <div class="result-label">סה"כ הופקד</div>
-              <div class="result-value" id="dca-invested">—</div>
-            </div>
-            <div class="result-card" id="dca-pnl-card">
-              <div class="result-label">רווח / הפסד</div>
-              <div class="result-value" id="dca-pnl">—</div>
-            </div>
-            <div class="result-card">
-              <div class="result-label">תשואה על ההשקעה</div>
-              <div class="result-value" id="dca-roi">—</div>
-            </div>
+            <div class="result-card"><div class="result-label">שווי נוכחי</div><div class="result-value" id="dca-current">—</div></div>
+            <div class="result-card"><div class="result-label">סה"כ הופקד</div><div class="result-value" id="dca-invested">—</div></div>
+            <div class="result-card" id="dca-pnl-card"><div class="result-label">רווח / הפסד</div><div class="result-value" id="dca-pnl">—</div></div>
+            <div class="result-card"><div class="result-label">תשואה על ההשקעה</div><div class="result-value" id="dca-roi">—</div></div>
           </div>
-          <div class="card mt-3">
-            <canvas id="dca-chart" height="280"></canvas>
-          </div>
+          <div class="card mt-3"><canvas id="dca-chart" height="280"></canvas></div>
         </div>
       </div>
 
@@ -267,22 +293,10 @@
         <div class="card">
           <div class="card-header"><h3>מתי אגיע ליעד שלי?</h3></div>
           <div class="calc-form-grid">
-            <div class="form-group">
-              <label>יעד ($)</label>
-              <input type="number" id="goal-target" value="1000000" min="1000" step="1000">
-            </div>
-            <div class="form-group">
-              <label>הון התחלתי ($)</label>
-              <input type="number" id="goal-initial" value="10000" min="0" step="1000">
-            </div>
-            <div class="form-group">
-              <label>הפקדה חודשית ($)</label>
-              <input type="number" id="goal-monthly" value="1000" min="0" step="100">
-            </div>
-            <div class="form-group">
-              <label>תשואה שנתית צפויה (%)</label>
-              <input type="number" id="goal-rate" value="10" min="0.5" max="50" step="0.5">
-            </div>
+            <div class="form-group"><label>יעד ($)</label><input type="number" id="goal-target" value="1000000" min="1000" step="1000"></div>
+            <div class="form-group"><label>הון התחלתי ($)</label><input type="number" id="goal-initial" value="10000" min="0" step="1000"></div>
+            <div class="form-group"><label>הפקדה חודשית ($)</label><input type="number" id="goal-monthly" value="1000" min="0" step="100"></div>
+            <div class="form-group"><label>תשואה שנתית צפויה (%)</label><input type="number" id="goal-rate" value="10" min="0.5" max="50" step="0.5"></div>
           </div>
           <div class="mt-3">
             <button class="btn btn-primary" id="runGoalBtn">חשב</button>
@@ -290,26 +304,12 @@
         </div>
         <div id="goal-results" class="hidden">
           <div class="result-cards">
-            <div class="result-card accent">
-              <div class="result-label">תגיע ליעד בעוד</div>
-              <div class="result-value" id="goal-years">—</div>
-            </div>
-            <div class="result-card accent">
-              <div class="result-label">שנת יעד</div>
-              <div class="result-value" id="goal-year">—</div>
-            </div>
-            <div class="result-card">
-              <div class="result-label">סה"כ הפקדות</div>
-              <div class="result-value" id="goal-total-invested">—</div>
-            </div>
-            <div class="result-card success">
-              <div class="result-label">תשואות שנצברו</div>
-              <div class="result-value" id="goal-earnings">—</div>
-            </div>
+            <div class="result-card accent"><div class="result-label">תגיע ליעד בעוד</div><div class="result-value" id="goal-years">—</div></div>
+            <div class="result-card accent"><div class="result-label">שנת יעד</div><div class="result-value" id="goal-year">—</div></div>
+            <div class="result-card"><div class="result-label">סה"כ הפקדות</div><div class="result-value" id="goal-total-invested">—</div></div>
+            <div class="result-card success"><div class="result-label">תשואות שנצברו</div><div class="result-value" id="goal-earnings">—</div></div>
           </div>
-          <div class="card mt-3">
-            <canvas id="goal-chart" height="280"></canvas>
-          </div>
+          <div class="card mt-3"><canvas id="goal-chart" height="280"></canvas></div>
         </div>
       </div>
     </div>
@@ -342,7 +342,6 @@
             <button class="color-btn" data-color="#f97316" style="background:#f97316"></button>
           </div>
         </div>
-
         <div class="holdings-section">
           <div class="holdings-header">
             <label>ניירות ערך</label>
@@ -353,11 +352,7 @@
             </div>
           </div>
           <div class="holdings-table-header">
-            <span>טיקר</span>
-            <span>משקל (%)</span>
-            <span>תאריך קנייה</span>
-            <span>מחיר קנייה ($)</span>
-            <span></span>
+            <span>טיקר</span><span>משקל (%)</span><span>תאריך קנייה</span><span>מחיר קנייה ($)</span><span></span>
           </div>
           <div id="holdings-list"></div>
         </div>
@@ -369,6 +364,12 @@
     </div>
   </div>
 
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <!-- app.js must load before firebase-sync.js (sync references state/navigate/toast) -->
   <script src="app.js"></script>
+  <script src="firebase-sync.js"></script>
 </body>
 </html>
