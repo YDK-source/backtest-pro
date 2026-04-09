@@ -1093,11 +1093,30 @@ function initLobby() {
   // Show lobby for fresh start
   document.getElementById('createRoomBtn').addEventListener('click', () => {
     const roomId = generateRoomCode();
+
+    // Check if there's existing local data to migrate
+    let localPortfolios = [];
+    try {
+      const raw = localStorage.getItem('bp_portfolios');
+      localPortfolios = raw ? JSON.parse(raw) : [];
+    } catch { localPortfolios = []; }
+
     enterRoomMode(roomId);
-    // Show the room code in a toast so user can share it immediately
-    setTimeout(() => {
-      toast(`החדר שלך: ${roomId} — שתף עם החבר שלך`, 'success', 7000);
-    }, 600);
+
+    // After a short delay (so Firestore listener is set up), migrate local data
+    if (localPortfolios.length > 0) {
+      setTimeout(() => {
+        localPortfolios.forEach(p => window.syncPortfolioSave(p));
+        toast(`✅ ${localPortfolios.length} תיקים הועברו לחדר`, 'success', 5000);
+        setTimeout(() => {
+          toast(`קוד החדר: ${roomId} — שתף עם החבר שלך 📋`, 'success', 8000);
+        }, 1000);
+      }, 1500);
+    } else {
+      setTimeout(() => {
+        toast(`קוד החדר: ${roomId} — שתף עם החבר שלך 📋`, 'success', 8000);
+      }, 600);
+    }
   });
 
   document.getElementById('joinRoomBtn').addEventListener('click', () => {
