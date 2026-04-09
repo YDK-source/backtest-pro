@@ -24,14 +24,17 @@ const state = {
   cache: {},          // ticker → [{date, price}]
   charts: {},         // chartId → Chart instance
   editingColor: '#6366f1',
+  mode: 'local',      // 'local' | 'room'
 };
 
 // ===== STORAGE =====
 function savePortfolios() {
+  if (state.mode === 'room') return; // Firestore is source of truth in room mode
   localStorage.setItem('bp_portfolios', JSON.stringify(state.portfolios));
 }
 
 function loadPortfolios() {
+  if (state.mode === 'room') return; // onSnapshot handles this in room mode
   try {
     const raw = localStorage.getItem('bp_portfolios');
     state.portfolios = raw ? JSON.parse(raw) : [];
@@ -355,6 +358,7 @@ function renderPortfolios() {
             </div>
           </div>
           <div class="pi-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-sm btn-share" onclick="sharePortfolio(${i})" title="שתף קישור">🔗 שתף</button>
             <button class="btn btn-sm btn-secondary" onclick="openEditModal(${i})">✏️ ערוך</button>
             <button class="btn btn-sm btn-danger" onclick="deletePortfolio(${i})">🗑️ מחק</button>
           </div>
@@ -373,6 +377,135 @@ function renderPortfolios() {
   }).join('');
 }
 
+// ===== SHARING =====
+function sharePortfolio(i) {
+  const p = state.portfolios[i];
+  // Encode only the essential data (not the internal id)
+  const payload = {
+    name: p.name,
+    color: p.color,
+    holdings: p.holdings,
+  };
+  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const url = `${location.origin}${location.pathname}#import=${encoded}`;
+
+  navigator.clipboard.writeText(url).then(() => {
+    toast(`קישור לתיק "${p.name}" הועתק ללוח! שלח אותו לחבר שלך.`, 'success', 5000);
+  }).catch(() => {
+    // Fallback: prompt
+    prompt('העתק את הקישור הזה ושלח לחבר:', url);
+  });
+}
+
+// ===== IMPORT FROM URL =====
+let pendingImport = null;
+
+function checkUrlImport() {
+  const hash = location.hash;
+  if (!hash.startsWith('#import=')) return;
+
+  try {
+    const encoded = hash.slice('#import='.length);
+    const json = decodeURIComponent(escape(atob(encoded)));
+    const data = JSON.parse(json);
+
+    if (!data.name || !Array.isArray(data.holdings)) return;
+
+    pendingImport = data;
+
+    // Show banner
+    document.getElementById('import-banner-name').textContent = data.name;
+    document.getElementById('import-banner').classList.remove('hidden');
+
+    // Clean URL without reloading
+    history.replaceState(null, '', location.pathname);
+  } catch (e) {
+    console.warn('Invalid import URL', e);
+  }
+}
+
+function confirmImport() {
+  if (!pendingImport) return;
+
+  const exists = state.portfolios.find(p => p.name === pendingImport.name);
+  if (exists) {
+    if (!confirm(`כבר קיים תיק בשם "${pendingImport.name}". להוסיף בכל זאת?`)) return;
+  }
+
+  const newPortfolio = {
+    id: uid(),
+    name: pendingImport.name,
+    color: pendingImport.color || '#6366f1',
+    holdings: pendingImport.holdings,
+    createdAt: new Date().toISOString(),
+  };
+  state.portfolios.push(newPortfolio);
+
+  if (state.mode === 'room') {
+    window.syncPortfolioSave(newPortfolio);
+  } else {
+    savePortfolios();
+    renderPortfolios();
+  }
+  const importedName = newPortfolio.name;
+  pendingImport = null;
+  dismissImport();
+  toast(`התיק "${importedName}" יובא בהצלחה!`, 'success');
+}
+
+function dismissImport() {
+  pendingImport = null;
+  document.getElementById('import-banner').classList.add('hidden');
+}
+
+// ===== EXPORT ALL =====
+function exportAll() {
+  if (state.portfolios.length === 0) { toast('אין תיקים לייצוא', 'error'); return; }
+  const json = JSON.stringify(state.portfolios, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `backtest-pro-portfolios-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('הקובץ יוצא בהצלחה', 'success');
+}
+
+// ===== IMPORT FROM FILE =====
+function importFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      const portfolios = Array.isArray(data) ? data : [data];
+      let imported = 0;
+      for (const p of portfolios) {
+        if (!p.name || !Array.isArray(p.holdings)) continue;
+        // Avoid duplicates by name
+        if (state.portfolios.find(x => x.name === p.name)) {
+          if (!confirm(`תיק "${p.name}" כבר קיים. להחליף?`)) continue;
+          const idx = state.portfolios.findIndex(x => x.name === p.name);
+          state.portfolios[idx] = { ...p, id: state.portfolios[idx].id };
+        } else {
+          state.portfolios.push({ ...p, id: uid() });
+        }
+        imported++;
+      }
+      if (state.mode === 'room') {
+        state.portfolios.slice(-imported).forEach(p => window.syncPortfolioSave(p));
+      } else {
+        savePortfolios();
+        renderPortfolios();
+      }
+      toast(`${imported} תיקים יובאו בהצלחה`, 'success');
+    } catch {
+      toast('קובץ לא תקין', 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
 function togglePortfolioBody(i) {
   const body = document.getElementById(`portfolio-body-${i}`);
   body.classList.toggle('open');
@@ -380,9 +513,14 @@ function togglePortfolioBody(i) {
 
 function deletePortfolio(i) {
   if (!confirm(`למחוק את התיק "${state.portfolios[i].name}"?`)) return;
+  const portfolioId = state.portfolios[i].id;
   state.portfolios.splice(i, 1);
-  savePortfolios();
-  renderPortfolios();
+  if (state.mode === 'room') {
+    window.syncPortfolioDelete(portfolioId); // Firestore write — onSnapshot will update UI
+  } else {
+    savePortfolios();
+    renderPortfolios();
+  }
   toast('התיק נמחק', 'info');
 }
 
@@ -602,7 +740,6 @@ function savePortfolio() {
     const idx = parseInt(editIdxRaw);
     portfolio.id = state.portfolios[idx].id;
     portfolio.createdAt = state.portfolios[idx].createdAt;
-    // Invalidate cache for changed tickers
     const oldTickers = state.portfolios[idx].holdings.map(h => h.ticker);
     const newTickers = holdings.map(h => h.ticker);
     [...oldTickers, ...newTickers].forEach(t => delete state.cache[t]);
@@ -613,9 +750,13 @@ function savePortfolio() {
     toast('התיק נשמר', 'success');
   }
 
-  savePortfolios();
+  if (state.mode === 'room') {
+    window.syncPortfolioSave(portfolio); // Firestore write — onSnapshot will re-render
+  } else {
+    savePortfolios();
+    renderPortfolios();
+  }
   closeModal();
-  renderPortfolios();
 }
 
 // ===== CALCULATOR =====
@@ -890,10 +1031,94 @@ function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ===== LOBBY & ROOM MANAGEMENT =====
+function generateRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars (0/O, 1/I)
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function updateRoomBadge(roomId) {
+  document.getElementById('room-code-display').textContent = roomId;
+  document.getElementById('room-badge').classList.remove('hidden');
+}
+
+function enterLocalMode() {
+  state.mode = 'local';
+  localStorage.removeItem('bp_room');
+  document.getElementById('lobby-overlay').classList.add('hidden');
+  document.getElementById('room-badge').classList.add('hidden');
+  loadPortfolios();
+  navigate('dashboard');
+}
+
+function enterRoomMode(roomId) {
+  state.mode = 'room';
+  document.getElementById('lobby-overlay').classList.add('hidden');
+  updateRoomBadge(roomId);
+  // joinRoom is defined in firebase-sync.js; it sets up onSnapshot which calls navigate() after first sync
+  window.joinRoom(roomId);
+}
+
+function leaveRoomMode() {
+  window.leaveRoom();
+  state.mode = 'local';
+  state.portfolios = [];
+  localStorage.removeItem('bp_room');
+  document.getElementById('room-badge').classList.add('hidden');
+  document.getElementById('lobby-overlay').classList.remove('hidden');
+  // Reset room input
+  document.getElementById('roomCodeInput').value = '';
+}
+
+function initLobby() {
+  const firebaseReady = window.firebaseReady === true;
+
+  if (!firebaseReady) {
+    // Show warning and disable room form
+    document.getElementById('lobby-no-firebase').classList.remove('hidden');
+    document.getElementById('lobby-firebase-form').style.opacity = '0.4';
+    document.getElementById('lobby-firebase-form').style.pointerEvents = 'none';
+    // Auto-enter local mode silently
+    enterLocalMode();
+    return;
+  }
+
+  // Resume previous room session automatically
+  const savedRoom = localStorage.getItem('bp_room');
+  if (savedRoom) {
+    enterRoomMode(savedRoom);
+    return;
+  }
+
+  // Show lobby for fresh start
+  document.getElementById('createRoomBtn').addEventListener('click', () => {
+    const roomId = generateRoomCode();
+    enterRoomMode(roomId);
+    // Show the room code in a toast so user can share it immediately
+    setTimeout(() => {
+      toast(`החדר שלך: ${roomId} — שתף עם החבר שלך`, 'success', 7000);
+    }, 600);
+  });
+
+  document.getElementById('joinRoomBtn').addEventListener('click', () => {
+    const raw = document.getElementById('roomCodeInput').value.trim().toUpperCase();
+    if (raw.length !== 6) { toast('קוד חדר חייב להיות 6 תווים', 'error'); return; }
+    enterRoomMode(raw);
+  });
+
+  document.getElementById('roomCodeInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('joinRoomBtn').click();
+    // Auto-uppercase
+    setTimeout(() => {
+      e.target.value = e.target.value.toUpperCase();
+    }, 0);
+  });
+
+  document.getElementById('lobbyLocalBtn').addEventListener('click', enterLocalMode);
+}
+
 // ===== EVENT LISTENERS =====
 document.addEventListener('DOMContentLoaded', () => {
-  loadPortfolios();
-
   // Apply saved theme
   const savedTheme = localStorage.getItem('bp_theme');
   if (savedTheme === 'light') {
@@ -908,6 +1133,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Theme toggle
   document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+
+  // Room badge actions
+  document.getElementById('leaveRoomBtn').addEventListener('click', leaveRoomMode);
+  document.getElementById('copyRoomCodeBtn').addEventListener('click', () => {
+    const code = document.getElementById('room-code-display').textContent;
+    navigator.clipboard.writeText(code).then(() => toast(`קוד "${code}" הועתק!`, 'success'));
+  });
+
+  // URL import check
+  checkUrlImport();
+
+  // Import banner
+  document.getElementById('confirmImportBtn').addEventListener('click', confirmImport);
+  document.getElementById('dismissImportBtn').addEventListener('click', dismissImport);
+
+  // Export / Import file
+  document.getElementById('exportAllBtn').addEventListener('click', exportAll);
+  document.getElementById('importFileBtn').addEventListener('click', () => {
+    document.getElementById('import-file-input').click();
+  });
+  document.getElementById('import-file-input').addEventListener('change', e => {
+    if (e.target.files[0]) importFromFile(e.target.files[0]);
+    e.target.value = '';
+  });
 
   // Portfolio modal
   document.getElementById('addPortfolioBtn').addEventListener('click', openAddModal);
@@ -951,6 +1200,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('runDcaBtn').addEventListener('click', runDCA);
   document.getElementById('runGoalBtn').addEventListener('click', runGoal);
 
-  // Initial render
-  navigate('dashboard');
+  // Init lobby (firebase-sync.js has already run by now and set window.firebaseReady)
+  initLobby();
 });
