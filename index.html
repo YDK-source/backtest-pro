@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backtest Pro | השוואת תיקי השקעות</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body class="dark">
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <span class="brand-icon">📈</span>
+      <span class="brand-text">Backtest Pro</span>
+    </div>
+    <div class="navbar-tabs">
+      <button class="tab-btn active" data-page="dashboard">לוח בקרה</button>
+      <button class="tab-btn" data-page="portfolios">תיקים</button>
+      <button class="tab-btn" data-page="backtest">Backtest</button>
+      <button class="tab-btn" data-page="calculator">מחשבון</button>
+    </div>
+    <button class="theme-btn" id="themeToggle" title="החלף ערכת נושא">🌙</button>
+  </nav>
+
+  <div id="toast-container"></div>
+
+  <main class="main">
+
+    <!-- ========== DASHBOARD ========== -->
+    <div id="page-dashboard" class="page active">
+      <div class="page-header">
+        <div>
+          <h1>לוח בקרה</h1>
+          <p class="page-subtitle">סקירה כללית של כל התיקים</p>
+        </div>
+      </div>
+      <div id="dashboard-empty" class="empty-state hidden">
+        <div class="empty-icon">📊</div>
+        <h3>אין עדיין תיקים</h3>
+        <p>צור תיק חדש כדי להתחיל</p>
+        <button class="btn btn-primary" onclick="navigate('portfolios')">צור תיק ראשון</button>
+      </div>
+      <div id="dashboard-content" class="hidden">
+        <div id="portfolio-cards" class="cards-grid"></div>
+        <div class="card mt-4">
+          <div class="card-header">
+            <h3>השוואת ביצועים — 12 חודשים אחרונים</h3>
+            <span class="badge" id="dashboard-loading-badge">טוען...</span>
+          </div>
+          <canvas id="dashboard-chart" height="320"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== PORTFOLIOS ========== -->
+    <div id="page-portfolios" class="page">
+      <div class="page-header">
+        <div>
+          <h1>תיקי השקעות</h1>
+          <p class="page-subtitle">הוסף וערוך תיקים</p>
+        </div>
+        <button class="btn btn-primary" id="addPortfolioBtn">+ הוסף תיק</button>
+      </div>
+      <div id="portfolios-list"></div>
+      <div id="portfolios-empty" class="empty-state hidden">
+        <div class="empty-icon">💼</div>
+        <h3>אין תיקים עדיין</h3>
+        <p>לחץ על "הוסף תיק" כדי להתחיל</p>
+      </div>
+    </div>
+
+    <!-- ========== BACKTEST ========== -->
+    <div id="page-backtest" class="page">
+      <div class="page-header">
+        <div>
+          <h1>Backtest והשוואה</h1>
+          <p class="page-subtitle">ביצועים היסטוריים</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3>הגדרות</h3></div>
+        <div class="controls-grid">
+          <div class="form-group">
+            <label>תקופה</label>
+            <select id="bt-range">
+              <option value="max">מקסימום דאטה</option>
+              <option value="10y">10 שנים</option>
+              <option value="5y">5 שנים</option>
+              <option value="3y">3 שנים</option>
+              <option value="1y">שנה</option>
+              <option value="custom">מותאם אישית</option>
+            </select>
+          </div>
+          <div class="form-group" id="bt-custom-group" style="display:none">
+            <label>מתאריך</label>
+            <input type="date" id="bt-custom-date">
+          </div>
+          <div class="form-group">
+            <label>Benchmark</label>
+            <div class="checkbox-group">
+              <label class="checkbox-label"><input type="checkbox" id="cb-spy" checked> SPY — S&P 500</label>
+              <label class="checkbox-label"><input type="checkbox" id="cb-qqq" checked> QQQ — NASDAQ-100</label>
+              <label class="checkbox-label"><input type="checkbox" id="cb-vti"> VTI — שוק כולל</label>
+            </div>
+          </div>
+          <div class="form-group form-group-btn">
+            <button class="btn btn-primary btn-lg" id="runBacktestBtn">▶ הרץ Backtest</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="bt-loading" class="loading-state hidden">
+        <div class="spinner"></div>
+        <p>טוען נתונים היסטוריים...</p>
+        <p id="bt-loading-ticker" class="text-muted"></p>
+      </div>
+
+      <div id="bt-results" class="hidden">
+        <div class="card">
+          <div class="card-header"><h3>ביצועים לאורך זמן (מנורמל ל-100 בנקודת ההתחלה)</h3></div>
+          <canvas id="backtest-chart" height="400"></canvas>
+        </div>
+        <div class="card mt-4">
+          <div class="card-header"><h3>טבלת מדדים</h3></div>
+          <div class="table-wrapper">
+            <table class="metrics-table">
+              <thead>
+                <tr>
+                  <th>תיק / Benchmark</th>
+                  <th>תשואה כוללת</th>
+                  <th>CAGR שנתי</th>
+                  <th>Sharpe Ratio</th>
+                  <th>Max Drawdown</th>
+                  <th>תנודתיות שנתית</th>
+                  <th>חודשים</th>
+                </tr>
+              </thead>
+              <tbody id="metrics-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="bt-no-portfolios" class="empty-state hidden">
+        <div class="empty-icon">⚠️</div>
+        <h3>אין תיקים</h3>
+        <p>הוסף לפחות תיק אחד כדי להריץ Backtest</p>
+        <button class="btn btn-primary" onclick="navigate('portfolios')">הוסף תיק</button>
+      </div>
+    </div>
+
+    <!-- ========== CALCULATOR ========== -->
+    <div id="page-calculator" class="page">
+      <div class="page-header">
+        <div>
+          <h1>מחשבון השקעות</h1>
+          <p class="page-subtitle">סימולציות ותכנון עתידי</p>
+        </div>
+      </div>
+
+      <div class="calc-tabs-nav">
+        <button class="calc-tab-btn active" data-calc="simulator">🔢 סימולטור</button>
+        <button class="calc-tab-btn" data-calc="dca">📅 DCA חודשי</button>
+        <button class="calc-tab-btn" data-calc="goal">🎯 יעד חיסכון</button>
+      </div>
+
+      <!-- Simulator -->
+      <div id="calc-simulator" class="calc-section">
+        <div class="card">
+          <div class="card-header"><h3>אם השקעתי סכום חד-פעמי...</h3></div>
+          <div class="calc-form-grid">
+            <div class="form-group">
+              <label>סכום השקעה ($)</label>
+              <input type="number" id="sim-amount" value="10000" min="100" step="100">
+            </div>
+            <div class="form-group">
+              <label>תאריך השקעה</label>
+              <input type="date" id="sim-date" value="2015-01-01">
+            </div>
+            <div class="form-group">
+              <label>נייר / תיק</label>
+              <select id="sim-target"></select>
+            </div>
+          </div>
+          <div class="mt-3">
+            <button class="btn btn-primary" id="runSimBtn">חשב</button>
+          </div>
+        </div>
+        <div id="sim-results" class="hidden">
+          <div class="result-cards">
+            <div class="result-card">
+              <div class="result-label">שווי נוכחי</div>
+              <div class="result-value" id="sim-current">—</div>
+            </div>
+            <div class="result-card" id="sim-pnl-card">
+              <div class="result-label">רווח / הפסד</div>
+              <div class="result-value" id="sim-pnl">—</div>
+            </div>
+            <div class="result-card">
+              <div class="result-label">תשואה כוללת</div>
+              <div class="result-value" id="sim-total-ret">—</div>
+            </div>
+            <div class="result-card">
+              <div class="result-label">CAGR שנתי</div>
+              <div class="result-value" id="sim-cagr">—</div>
+            </div>
+          </div>
+          <div class="card mt-3">
+            <canvas id="sim-chart" height="280"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- DCA -->
+      <div id="calc-dca" class="calc-section hidden">
+        <div class="card">
+          <div class="card-header"><h3>Dollar Cost Averaging — השקעה חודשית קבועה</h3></div>
+          <div class="calc-form-grid">
+            <div class="form-group">
+              <label>הפקדה חודשית ($)</label>
+              <input type="number" id="dca-amount" value="500" min="10" step="50">
+            </div>
+            <div class="form-group">
+              <label>תאריך התחלה</label>
+              <input type="date" id="dca-date" value="2015-01-01">
+            </div>
+            <div class="form-group">
+              <label>נייר / תיק</label>
+              <select id="dca-target"></select>
+            </div>
+          </div>
+          <div class="mt-3">
+            <button class="btn btn-primary" id="runDcaBtn">חשב</button>
+          </div>
+        </div>
+        <div id="dca-results" class="hidden">
+          <div class="result-cards">
+            <div class="result-card">
+              <div class="result-label">שווי נוכחי</div>
+              <div class="result-value" id="dca-current">—</div>
+            </div>
+            <div class="result-card">
+              <div class="result-label">סה"כ הופקד</div>
+              <div class="result-value" id="dca-invested">—</div>
+            </div>
+            <div class="result-card" id="dca-pnl-card">
+              <div class="result-label">רווח / הפסד</div>
+              <div class="result-value" id="dca-pnl">—</div>
+            </div>
+            <div class="result-card">
+              <div class="result-label">תשואה על ההשקעה</div>
+              <div class="result-value" id="dca-roi">—</div>
+            </div>
+          </div>
+          <div class="card mt-3">
+            <canvas id="dca-chart" height="280"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Goal -->
+      <div id="calc-goal" class="calc-section hidden">
+        <div class="card">
+          <div class="card-header"><h3>מתי אגיע ליעד שלי?</h3></div>
+          <div class="calc-form-grid">
+            <div class="form-group">
+              <label>יעד ($)</label>
+              <input type="number" id="goal-target" value="1000000" min="1000" step="1000">
+            </div>
+            <div class="form-group">
+              <label>הון התחלתי ($)</label>
+              <input type="number" id="goal-initial" value="10000" min="0" step="1000">
+            </div>
+            <div class="form-group">
+              <label>הפקדה חודשית ($)</label>
+              <input type="number" id="goal-monthly" value="1000" min="0" step="100">
+            </div>
+            <div class="form-group">
+              <label>תשואה שנתית צפויה (%)</label>
+              <input type="number" id="goal-rate" value="10" min="0.5" max="50" step="0.5">
+            </div>
+          </div>
+          <div class="mt-3">
+            <button class="btn btn-primary" id="runGoalBtn">חשב</button>
+          </div>
+        </div>
+        <div id="goal-results" class="hidden">
+          <div class="result-cards">
+            <div class="result-card accent">
+              <div class="result-label">תגיע ליעד בעוד</div>
+              <div class="result-value" id="goal-years">—</div>
+            </div>
+            <div class="result-card accent">
+              <div class="result-label">שנת יעד</div>
+              <div class="result-value" id="goal-year">—</div>
+            </div>
+            <div class="result-card">
+              <div class="result-label">סה"כ הפקדות</div>
+              <div class="result-value" id="goal-total-invested">—</div>
+            </div>
+            <div class="result-card success">
+              <div class="result-label">תשואות שנצברו</div>
+              <div class="result-value" id="goal-earnings">—</div>
+            </div>
+          </div>
+          <div class="card mt-3">
+            <canvas id="goal-chart" height="280"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ========== PORTFOLIO MODAL ========== -->
+  <div id="portfolio-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">תיק חדש</h2>
+        <button class="modal-close" id="closeModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-portfolio-id">
+        <div class="form-group">
+          <label>שם התיק / שם המשקיע</label>
+          <input type="text" id="portfolio-name" placeholder="למשל: יוסי, אבא, Growth Strategy...">
+        </div>
+        <div class="form-group">
+          <label>צבע</label>
+          <div class="color-picker" id="color-picker">
+            <button class="color-btn active" data-color="#6366f1" style="background:#6366f1"></button>
+            <button class="color-btn" data-color="#ef4444" style="background:#ef4444"></button>
+            <button class="color-btn" data-color="#10b981" style="background:#10b981"></button>
+            <button class="color-btn" data-color="#f59e0b" style="background:#f59e0b"></button>
+            <button class="color-btn" data-color="#3b82f6" style="background:#3b82f6"></button>
+            <button class="color-btn" data-color="#ec4899" style="background:#ec4899"></button>
+            <button class="color-btn" data-color="#14b8a6" style="background:#14b8a6"></button>
+            <button class="color-btn" data-color="#f97316" style="background:#f97316"></button>
+          </div>
+        </div>
+
+        <div class="holdings-section">
+          <div class="holdings-header">
+            <label>ניירות ערך</label>
+            <div class="holdings-header-right">
+              <span class="weight-display">סה"כ משקל: <span id="total-weight" class="weight-value">0%</span></span>
+              <span id="weight-warning" class="warning-text hidden">⚠️ חייב להסתכם ל-100%</span>
+              <button class="btn btn-sm btn-secondary" id="addHoldingBtn">+ הוסף נייר</button>
+            </div>
+          </div>
+          <div class="holdings-table-header">
+            <span>טיקר</span>
+            <span>משקל (%)</span>
+            <span>תאריך קנייה</span>
+            <span>מחיר קנייה ($)</span>
+            <span></span>
+          </div>
+          <div id="holdings-list"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="cancelModal">ביטול</button>
+        <button class="btn btn-primary" id="savePortfolioBtn">שמור תיק</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
